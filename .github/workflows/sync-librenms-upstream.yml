@@ -1,0 +1,31 @@
+# Keep this fork's default master branch in sync with librenms/librenms.
+# This workflow does not modify any feature branches or fetch unmerged PRs.
+name: Sync LibreNMS upstream
+
+on:
+  schedule:
+    # Daily at 03:17 UTC (11:17 PM EDT / 10:17 PM EST, previous local day).
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: librenms-upstream-master-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'Null0Engineer/LibreNMS-Development'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Synchronize master from LibreNMS upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            --header 'Accept: application/vnd.github+json' \
+            repos/Null0Engineer/LibreNMS-Development/merge-upstream \
+            -f branch=master
