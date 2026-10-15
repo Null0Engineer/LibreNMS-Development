@@ -299,18 +299,17 @@ ls -l /run/php-fpm-librenms.sock
 
 **Do not check off Phase 4 until the commands above and MariaDB access have been verified.**
 
-## 4. Next implementation stages — NOT YET VERIFIED ON REPLACEMENT VM
+## 5. Remaining application setup — NOT YET VERIFIED ON REPLACEMENT VM
 
 These are the remaining installation stages, not claims of completion:
 
-1. Configure MariaDB using the **current upstream install guide**, with a separate local `librenms` development database and noncommitted credentials.
-2. Apply LibreNMS's documented file permissions/ACLs and configure the PHP timezone and PHP-FPM pool/socket for the installed PHP version.
-3. Install Composer **development** dependencies as the `librenms` user. The upstream contributor guide uses `./scripts/composer_wrapper.php install` (without `--no-dev`); do not use production-only dependencies for feature development.
-4. Set `.env` with `APP_ENV=local` and `APP_DEBUG=true` **only for this isolated development VM**; never expose debug output publicly or commit `.env`.
-5. Configure an appropriate development web interface: `./lnms serve` is the upstream contributor quick-start; NGINX/PHP-FPM can be configured for a persistent VM using the official install guide.
-6. Run `./validate.php`, `./lnms dev:check`, relevant unit/integration tests, and upstream format checks where applicable; capture output and correct failures before feature work.
-7. Snapshot VM 107 once working, before starting the NetBox IPAM feature branch.
-8. Document **each actual command, configuration change, verification output, and fix** in this file as the build proceeds. Do not put secrets in the build log.
+1. Complete and verify Phase 4 MariaDB, timezones and PHP-FPM pool. Apply LibreNMS's documented file permissions/ACLs.
+2. Install Composer **development** dependencies as the `librenms` user. The upstream contributor guide uses `./scripts/composer_wrapper.php install` (without `--no-dev`); do not use production-only dependencies for feature development.
+3. Set `.env` with `APP_ENV=local` and `APP_DEBUG=true` **only for this isolated development VM**; never expose debug output publicly or commit `.env`.
+4. Configure an appropriate development web interface: `./lnms serve` is the upstream contributor quick-start; NGINX/PHP-FPM can be configured for a persistent VM using the official install guide.
+5. Run `./validate.php`, `./lnms dev:check`, relevant unit/integration tests, and upstream format checks where applicable; capture output and correct failures before feature work.
+6. Snapshot VM 107 once working, before starting the NetBox IPAM feature branch.
+7. Document **each actual command, configuration change, verification output, and fix** in this file as the build proceeds. Do not put secrets in the build log.
 
 ## History: discarded Ubuntu 24.04 build (reference only)
 
