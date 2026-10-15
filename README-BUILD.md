@@ -26,7 +26,7 @@ Do not make feature changes on production systems. Prefer feature branches, run 
 
 - [x] 0. Standard Ubuntu Server 26.04.1 installation completed; no Cloud-Init (OS release verified).
 - [ ] 1. OS version, networking and SSH verified.
-- [ ] 2. OS updates and LibreNMS package prerequisites installed and verified.
+- [x] 2. OS updates and LibreNMS package prerequisites installed and verified (2026-10-15; versions and service states confirmed; reboot recommended due to refreshed packages).
 - [ ] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified.
 - [ ] 4. MariaDB and PHP configuration completed.
 - [ ] 5. LibreNMS development dependencies, application settings and web access configured.
@@ -111,7 +111,7 @@ From the administrator workstation, verify SSH connectivity as `chanley` using t
 
 LibreNMS's current installation guide requires **PHP >= 8.4**, recommends **PHP 8.5**, and has an Ubuntu 26.04 package list. Re-check upstream instructions before each rebuild: https://docs.librenms.org/Installation/Install-LibreNMS/ .
 
-**Current status:** PHP was *not installed* when checked on 2026-10-15. The Ubuntu 26.04 apt guidance offered PHP 8.5. Use the distro's default PHP 8.5 packages below; no external PHP repository should be needed. The commands below are **next actions**, not yet executed on the new VM.
+**Current status:** The full prerequisite package command below completed on the new Ubuntu 26.04 VM on 2026-10-15. The earlier initial OS check showed PHP absent; PHP **8.5.4** is now installed from Ubuntu's official package repository. APT reported installing 176 packages. No installation errors appeared in the supplied log. The next actions are configuring LibreNMS and verifying its runtime.
 
 ```bash
 sudo apt update
@@ -136,7 +136,33 @@ nginx -v
 git --version
 ```
 
-Record the *new VM's actual versions* below after verification. If `php -v` is below 8.4, stop and follow the current official OS-specific PHP installation guidance; do not assume a previous Ubuntu version's packages are suitable.
+**Verified results (2026-10-15, rebuilt Ubuntu 26.04.1):**
+
+```text
+PHP 8.5.4 (cli)
+mariadb from 11.8.6-MariaDB
+nginx version: nginx/1.28.3 (Ubuntu)
+git version 2.53.0
+systemctl is-active mariadb   -> active
+systemctl is-active nginx     -> active
+systemctl is-active php8.5-fpm -> active
+```
+
+APT reported 176 packages installed, 0 upgraded and 0 removed by the prerequisite-install command, with 3 packages left 'Not Upgrading'. Package triggers completed and `needrestart` reported some deferred restarts and the then-current SSH session holding outdated binaries; a controlled reboot was recommended before continuing. No fatal package errors were visible. Reverify PHP, MariaDB, NGINX and PHP-FPM after reboot. `snmpd` was installed as a dependency but **SNMPv3 configuration has not yet been completed**.
+
+### Phase 2 package-install evidence (2026-10-15)
+
+Executed the prerequisite install command shown above on the replacement Ubuntu 26.04 VM. Verified versions and three active services. The install output is retained in the build conversation; it is not necessary to commit all 1,000+ APT log lines. After reboot, verify with:
+
+```bash
+php -v
+mariadb --version
+nginx -v
+git --version
+systemctl is-active mariadb nginx php8.5-fpm
+```
+
+**Do not proceed to phase 3 if any of the service checks is not active.**
 
 ## 3. LibreNMS source, account and Git remotes
 
@@ -208,11 +234,11 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 | Item | New VM result | Date / status |
 |---|---|---|
 | Ubuntu release | `26.04.1 LTS` / `resolute` | Verified 2026-10-15 |
-| PHP version | Not installed; apt offers PHP 8.5 | Pending installation |
-| MariaDB version | Pending | Not installed/verified |
-| NGINX version | Pending | Not installed/verified |
+| PHP version | `8.5.4` | Verified installed 2026-10-15 |
+| MariaDB version | `11.8.6`; service active | Verified 2026-10-15 |
+| NGINX version | `1.28.3`; service active | Verified 2026-10-15 |
 | Git version | `2.53.0` | Verified 2026-10-15 |
-| Git remotes | Pending | Not verified |
+| Git remotes | Pending on rebuilt VM | Not configured/verified |
 | LibreNMS validation | Pending | Not verified |
 | Snapshot name | Pending | Not created |
 
