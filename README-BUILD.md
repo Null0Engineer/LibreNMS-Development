@@ -414,6 +414,8 @@ The MariaDB response also contained a password verifier/hash; **never copy that 
 
 ## 5. LibreNMS development dependencies and runtime — IN PROGRESS
 
+**2026-10-15 checkpoint:** Composer is clean, but a first-run Laravel `optimize:clear` reported a missing database `cache` table. See 5C below; this is expected with the default database-backed cache and an uninitialized database, and must be resolved before the app/web checks.
+
 ### 5A. Runtime directories and ACLs — required before Composer on rebuilds
 
 Official installation guide: https://docs.librenms.org/Installation/Install-LibreNMS/ . On the first attempt (2026-10-15), this directory/ACL phase was missed, so the Composer install ended with these nonfatal messages:
@@ -539,6 +541,7 @@ Add or update exactly one active value for each of these keys (the `DB_*` lines 
 APP_ENV=local
 APP_DEBUG=true
 APP_URL=http://127.0.0.1:8000
+CACHE_STORE=file
 DB_HOST=localhost
 DB_PORT=3306
 DB_DATABASE=librenms
@@ -548,12 +551,35 @@ DB_PASSWORD="REPLACE_WITH_YOUR_EXISTING_LOCAL_DB_PASSWORD"
 
 The database credentials are those already created in Phase 4. `DB_HOST=localhost` is deliberate for this same-host MariaDB account. Do not run `mariadb -e` with a password on the command line or paste `.env` into support chat.
 
-Generate a Laravel application key and clear cached configuration:
+**First-use cache dependency (mandatory for a fresh database):** LibreNMS's tracked `config/cache.php` uses `env('CACHE_STORE', env('CACHE_DRIVER', 'database'))`. The default is a database cache; its `cache` table is unavailable until the schema is initialized. To avoid calling the uncreated database cache during bootstrap, set `CACHE_STORE=file` in this **development VM's** `.env` before issuing `php artisan optimize:clear`. This uses the already-created `storage/framework/cache/data` directory. Keep a single active `CACHE_STORE` entry.
+
+Generate a Laravel application key **only if one is not already configured**:
 
 ```bash
-php artisan key:generate
-php artisan optimize:clear
+grep -q '^APP_KEY=base64:' .env || php artisan key:generate
 ```
+
+Then clear configuration and caches in this order:
+
+```bash
+php artisan config:clear
+php artisan cache:clear
+php artisan optimize:clear
+php artisan config:show cache
+```
+
+The `default` setting displayed by `config:show cache` should be `file`.
+
+**Observed bootstrap error on 2026-10-15:**
+
+```text
+Illuminate\\Database\\QueryException
+SQLSTATE[42S02]: Base table or view not found: 1146
+Table 'librenms.cache' doesn't exist
+SQL: delete from `cache`
+```
+
+This occurred during `php artisan optimize:clear` because the default database-backed cache had no table. The stack trace shows a cache store deletion, **not** a failure to log in to MariaDB. Corrective action recorded above; **user has not yet supplied successful output of the fix**. Do not create a speculative cache table or edit `config/cache.php` to resolve this; local `.env` configuration is sufficient. Once the schema exists, database cache can be considered separately.
 
 Check that the key was set **without printing it** and the file stays private:
 
@@ -573,7 +599,7 @@ php artisan migrate:status
 
 For a completely empty dev database, the migrations may not yet be installed; assess the output before running `php artisan migrate` on this **local development database only**. Document the exact result and SQL state before enabling additional processes. Do not run migrations against production.
 
-**Status:** commands prepared, not yet executed or verified.
+**Status:** `.env` exists and MariaDB was contacted successfully by Artisan (confirmed by the stack trace), but `php artisan optimize:clear` failed due to the missing `cache` table. File cache correction provided; **verification pending**. Do not mark phase 5 complete yet.
 
 
 
