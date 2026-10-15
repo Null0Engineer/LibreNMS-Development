@@ -28,7 +28,7 @@ Do not make feature changes on production systems. Prefer feature branches, run 
 - [ ] 1. OS version, networking and SSH verified.
 - [x] 2. OS updates and LibreNMS package prerequisites installed and verified (2026-10-15; versions and service states confirmed; reboot recommended due to refreshed packages).
 - [x] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified (2026-10-15; clean checkout on `master`).
-- [ ] 4. MariaDB and PHP configuration completed.
+- [ ] 4. MariaDB and PHP configuration completed (MariaDB settings and DB/user setup reported done 2026-10-15; verify outputs and configure PHP timezone/FPM before checking this off).
 - [ ] 5. LibreNMS development dependencies, application settings and web access configured.
 - [ ] 6. Validation/tests completed; a known-good Proxmox snapshot taken.
 - [ ] 7. NetBox integration feature branch created.
@@ -212,9 +212,9 @@ Expected: `origin` points to the development fork, `upstream` to LibreNMS, curre
 - `git branch -vv`: `* master 43bfcc953a [origin/master] docs: note SNMPv3-only precaution on new LibreNMS VM`.
 - **Phase 3 finished.** This SHA is the *checkout observed at verification time*. The build README itself may receive newer documentation commits; fetch/pull updates only after confirming the local worktree is clean.
 
-## 4. MariaDB and PHP configuration — next steps (PENDING)
+## 4. MariaDB and PHP configuration — IN PROGRESS
 
-Apply only on the **new Ubuntu 26.04.1** VM as root. These are the steps to execute next; successful completion has **not yet been verified**. Source: https://docs.librenms.org/Installation/Install-LibreNMS/ with Ubuntu 26.04 selected.
+Apply only on the **new Ubuntu 26.04.1** VM as root. **Operator reported completion of MariaDB configuration and database/user creation on 2026-10-15**, but command output has not yet been submitted for validation. Timezone and PHP-FPM tasks are still pending. Source: https://docs.librenms.org/Installation/Install-LibreNMS/ with Ubuntu 26.04 selected.
 
 ### 4A. Set server and PHP timezones
 
@@ -237,7 +237,7 @@ Check:
 php -r 'echo date_default_timezone_get(), PHP_EOL;'
 ```
 
-### 4B. Configure MariaDB
+### 4B. Configure MariaDB — reported complete, verification pending
 
 ```bash
 vi /etc/mysql/mariadb.conf.d/50-server.cnf
@@ -261,7 +261,7 @@ mariadb -e "SHOW VARIABLES WHERE Variable_name IN ('innodb_file_per_table','lowe
 
 Expected: MariaDB active; `innodb_file_per_table=ON`, `lower_case_table_names=0`.
 
-### 4C. Create a **local dev-only** MariaDB database and account
+### 4C. Create a **local dev-only** MariaDB database and account — reported complete, verification pending
 
 Enter `mariadb` as root. Substitute a generated **unique** password locally for the placeholder; do not commit the password or paste it into the build log.
 
@@ -281,6 +281,23 @@ mariadb -e "SHOW GRANTS FOR 'librenms'@'localhost';"
 
 Do not use a production database or shared production credentials.
 
+**Post-configuration verification (still pending on this VM):**
+
+```bash
+systemctl is-active mariadb
+mariadb -e "SHOW VARIABLES WHERE Variable_name IN ('innodb_file_per_table','lower_case_table_names');"
+mariadb -e "SHOW DATABASES LIKE 'librenms';"
+mariadb -e "SHOW GRANTS FOR 'librenms'@'localhost';"
+```
+
+Confirm the application user can authenticate with its own password, without displaying it on screen or saving it in the shell history:
+
+```bash
+mariadb -u librenms -p -e "SELECT CURRENT_USER();"
+```
+
+**2026-10-15 progress:** user said **“done”** after being instructed to configure MariaDB and create the dev database/user. Treat 4B and 4C as *operator-reported complete*, not instrument-verified, until these commands pass. Do **not** commit any credentials.
+
 ### 4D. PHP-FPM pool — apply after database verification
 
 ```bash
@@ -297,7 +314,18 @@ systemctl is-active php8.5-fpm
 ls -l /run/php-fpm-librenms.sock
 ```
 
-**Do not check off Phase 4 until the commands above and MariaDB access have been verified.**
+**PHP-FPM verification (pending):**
+
+```bash
+php-fpm8.5 -t
+systemctl is-active php8.5-fpm
+grep -E '^\[(librenms|www)\]|^(user|group|listen)\s*=' /etc/php/8.5/fpm/pool.d/librenms.conf
+ls -l /run/php-fpm-librenms.sock
+```
+
+The PHP-FPM `librenms` process must run as `librenms`. The socket must exist and be accessible by the NGINX worker; the socket path must match NGINX's future `fastcgi_pass`. Preserve `www.conf` until the new pool is tested.
+
+**Do not check off Phase 4 until the commands above, timezones and MariaDB access have been verified.**
 
 ## 5. Remaining application setup — NOT YET VERIFIED ON REPLACEMENT VM
 
