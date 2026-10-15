@@ -2,7 +2,7 @@
 
 > **Build log / reproducible rebuild guide** — updated 2026-10-15.
 >
-> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress**: `.env` connects to MariaDB; `CACHE_STORE=file` is verified; **LibreNMS's initial schema import and database migrations have now succeeded** (2026-10-15). The application key/permissions, user access, web UI, and full validation are pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
+> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress**: `.env` connects to MariaDB; `CACHE_STORE=file` is verified; **LibreNMS's initial schema import and database migrations have now succeeded** (2026-10-15). The application key and `.env` permissions are verified. Initial `./validate.php` passed database/schema/RRD checks but reported missing cron wrapper and scheduler; initial local admin, CLI service fixes, web UI, and final validation remain pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
 
 ## Purpose and guardrails
 
@@ -29,7 +29,7 @@ Do not make feature changes on production systems. Prefer feature branches, run 
 - [x] 2. OS updates and LibreNMS package prerequisites installed and verified (2026-10-15; versions and service states confirmed; reboot recommended due to refreshed packages).
 - [x] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified (2026-10-15; clean checkout on `master`).
 - [x] 4. MariaDB and PHP configuration completed (timezone CLI/FPM verified, local `librenms` database granted ALL PRIVILEGES, PHP-FPM pool active; 2026-10-15).
-- [ ] 5. LibreNMS development dependencies, application settings and web access configured (Composer and post-install recheck verified; `.env`, application database initialization and web setup pending).
+- [ ] 5. LibreNMS development dependencies, application settings and web access configured (Composer, `.env` key permissions, cache and database schema verified; cron/scheduler, local admin and web setup pending).
 - [ ] 6. Validation/tests completed; a known-good Proxmox snapshot taken.
 - [ ] 7. NetBox integration feature branch created.
 
@@ -669,11 +669,118 @@ Browse `http://127.0.0.1:8000` on the workstation. Replace `<VM_IP>` with the ne
 
 **Persistent NGINX later:** Use the official [NGINX install instructions](https://docs.librenms.org/Installation/Install-LibreNMS/) with `root /opt/librenms/html` and `fastcgi_pass unix:/run/php-fpm-librenms.sock` (already verified). Keep it restricted until debug is disabled and the site is properly secured. NGINX application-site setup is **not yet executed or tested**.
 
-### 5E. Validation, snapshot, feature branch — PENDING
+### 5E. Initial LibreNMS validation — COMPLETED WITH TWO EXPECTED SERVICE FAILURES (2026-10-15)
 
-Run `./validate.php`, `./lnms dev:check`, applicable tests/lint, and document the output and fixes. After a validated baseline, take a Proxmox VM 107 snapshot before beginning NetBox IPAM development on a new feature branch.
+**Verified GLKVM-console output** (operator is connected via remote KVM from work, not direct SSH):
 
-**Documentation rule:** Record exactly what was executed and verified, distinguish warnings from failures, do not copy credential hashes or other secrets, and do not overwrite existing user-created configuration during a rebuild.
+```text
+grep APP_KEY (does not reveal key) -> APP_KEY configured
+stat .env -> 600 librenms:librenms
+LibreNMS -> 26.10.0-dev.245+43bfcc953a
+DB Schema -> 2026_10_09_000000_reset_invalid_alert_schedule_behavior (408)
+PHP -> 8.5.4
+Python -> 3.14.4
+Database -> MariaDB 11.8.6
+RRDTool -> 1.9.0
+SNMP tools -> 5.9.4.pre2
+Composer -> 2.10.3
+
+[OK] Composer dependencies up-to-date
+[OK] Database Connected
+[OK] Database Schema is current/correct
+[OK] SQL meets minimum requirements and engine/collations optimal
+[OK] MySQL/PHP time match
+[OK] Locks functional
+[OK] rrd_dir writable; RRDTool version
+[OK] Redis unavailable (optional)
+[OK] Polling frequencies no errors
+
+[FAIL] Python wrapper cron entry is not present
+[FAIL] Scheduler is not running
+
+[WARN] Debug enabled (intentional dev only; do not expose to public network)
+[WARN] No devices (expected empty new dev database)
+[WARN] Global lnms shortcut missing
+[WARN] Bash completion missing
+[WARN] Log rotation missing
+```
+
+No evidence of a PHP, database or permissions blocker remains. **Do not report validation as clean until the two `FAIL` results are fixed and validated again.** The optional warnings are independent.
+
+### 5F. Cron, scheduler and safe Git workflow — NEXT, NOT YET EXECUTED
+
+Follow [official LibreNMS installation](https://docs.librenms.org/Installation/Install-LibreNMS/) for `dist/librenms.cron`, scheduler service/timer, and log rotation. **Important for development:** the committed `dist/librenms.cron` contains `daily.sh` at 00:19 each day, which can update source files. LibreNMS says **not to remove this job** because it performs database cleanup; instead [disable core auto-updates](https://docs.librenms.org/General/Updating/) with `lnms config:set update false` so development work isn't changed underfoot.
+
+**Run as `librenms` first:**
+
+```bash
+cd /opt/librenms
+./lnms config:set update false
+./lnms config:get update
+```
+
+Expected `false`; **do not enable scheduled jobs until this value is confirmed**. Preserve the auto-update-off setting and avoid automatic upstream merges in this fork.
+
+**Then run as `root`:**
+
+```bash
+cp /opt/librenms/dist/librenms.cron /etc/cron.d/librenms
+cp /opt/librenms/dist/librenms-scheduler.service \
+   /opt/librenms/dist/librenms-scheduler.timer \
+   /etc/systemd/system/
+cp /opt/librenms/misc/librenms.logrotate /etc/logrotate.d/librenms
+
+systemctl daemon-reload
+systemctl enable --now cron
+systemctl enable --now librenms-scheduler.timer
+
+systemctl is-active cron
+systemctl is-active librenms-scheduler.timer
+systemctl list-timers --all librenms-scheduler.timer
+```
+
+The stock cron config has `discovery-wrapper.py`, `poller-wrapper.py`, alerting/billing, and `daily.sh`. The timer starts `php artisan schedule:run` as `librenms` on a minutely cadence. **Do not also enable LibreNMS Dispatcher polling** alongside this cron job without disabling the duplicate cron pollers; see [official Dispatcher docs](https://docs.librenms.org/Extensions/Dispatcher-Service/).
+
+Optional helpers, after core validation (run as root; don't overwrite existing unrelated paths):
+
+```bash
+ln -s /opt/librenms/lnms /usr/local/bin/lnms
+cp /opt/librenms/misc/lnms-completion.bash /etc/bash_completion.d/
+```
+
+**Revalidate as `librenms`:**
+
+```bash
+cd /opt/librenms
+./validate.php
+```
+
+Possible remaining warnings: debug mode and empty devices are intentional for development; confirm neither of the previous two `FAIL` conditions remains.
+
+### 5G. Create the first local admin — NEXT, NOT YET EXECUTED
+
+`./lnms user:add --help` was checked and confirmed:
+
+```text
+user:add [options] [<username>]
+-r, --role=ROLE  [user, global-read, admin]
+-p, --password=PASSWORD  prompts interactively if omitted
+```
+
+After DB is initialized, create a local development admin as the `librenms` account (choose local username):
+
+```bash
+cd /opt/librenms
+./lnms user:add -r admin devadmin
+```
+
+Do **not** add `-p` on the command line: enter a strong password at the interactive prompt. This local-account command is valid only if the site uses MySQL authentication, as noted by its own `--help`. Do not paste passwords into chat or README.
+
+### 5H. Final checks, snapshot and feature branch — PENDING
+
+Once cron/scheduler and admin creation pass, do a CLI-only HTTP smoke test or later access the browser via a trusted home-LAN/VPN network path. Capture `./validate.php` output, `./lnms dev:check`, applicable tests/lint, and correct outstanding unexpected errors. Snapshot Proxmox VM 107 after the verified base is working. Start NetBox IPAM work on a named feature branch following the [mandatory LibreNMS development guidelines](https://docs.librenms.org/Developing/).
+
+**Documentation rule:** Record exactly what was executed and verified; distinguish warnings from failures, do not copy password hashes, keys or secrets, and do not overwrite existing user-created configuration during a rebuild.
 
 ## History: discarded Ubuntu 24.04 build (reference only)
 
@@ -709,7 +816,8 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 | MariaDB privileges | `GRANT ALL PRIVILEGES ON librenms.*` | Verified 2026-10-15 |
 | Composer dependencies | 202 including require-dev; second run clean, zero package changes | Verified 2026-10-15; missing-directory warnings resolved |
 | Database migrations | Base schema import, tracking table, subsequent migrations through 2026-10-09 | Verified 2026-10-15; all statuses `Ran` |
-| LibreNMS validation | Pending | Not verified |
+| LibreNMS validation | Core database, schema, locks, RRD passed; missing cron + scheduler | Initial run 2026-10-15; two outstanding FAILs |
+| Application key/.env | Key present; mode `600`, owner `librenms` | Verified 2026-10-15 |
 | Snapshot name | Pending | Not created |
 
 **Documentation rule:** Update this file during the build; keep completed steps, failed attempts (briefly, with correction), exact commands and verification checks clearly distinguished. Recheck official LibreNMS development guidance before adding or changing project code.
