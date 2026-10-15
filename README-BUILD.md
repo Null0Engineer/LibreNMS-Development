@@ -27,7 +27,7 @@ Do not make feature changes on production systems. Prefer feature branches, run 
 - [x] 0. Standard Ubuntu Server 26.04.1 installation completed; no Cloud-Init (OS release verified).
 - [ ] 1. OS version, networking and SSH verified.
 - [x] 2. OS updates and LibreNMS package prerequisites installed and verified (2026-10-15; versions and service states confirmed; reboot recommended due to refreshed packages).
-- [ ] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified.
+- [x] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified (2026-10-15; clean checkout on `master`).
 - [ ] 4. MariaDB and PHP configuration completed.
 - [ ] 5. LibreNMS development dependencies, application settings and web access configured.
 - [ ] 6. Validation/tests completed; a known-good Proxmox snapshot taken.
@@ -200,6 +200,105 @@ sudo -u librenms git -C /opt/librenms branch -vv
 
 Expected: `origin` points to the development fork, `upstream` to LibreNMS, current branch `master` tracks `origin/master`, and the working tree is clean. A fetch is safe; **do not automatically push** to either remote or merge upstream before reviewing changes. Development should proceed on descriptive feature branches.
 
+**Confirmed on the replacement Ubuntu 26.04.1 VM, 2026-10-15:**
+
+- `systemctl disable --now snmpd` succeeded; systemd removed the service enablement symlink. This satisfies the precaution to keep the unconfigured SNMP agent off.
+- `librenms` service account creation, fork clone and ownership command completed without reported errors.
+- Fork checkout: 17,264 files, receiving/resolving objects 100%.
+- Fetch from the official `librenms/librenms` upstream completed successfully, including `upstream/master`.
+- `origin`: `https://github.com/Null0Engineer/LibreNMS-Development.git` for fetch and push.
+- `upstream`: `https://github.com/librenms/librenms.git` for fetch and push.
+- `git status -sb`: `## master...origin/master`, with no file changes listed.
+- `git branch -vv`: `* master 43bfcc953a [origin/master] docs: note SNMPv3-only precaution on new LibreNMS VM`.
+- **Phase 3 finished.** This SHA is the *checkout observed at verification time*. The build README itself may receive newer documentation commits; fetch/pull updates only after confirming the local worktree is clean.
+
+## 4. MariaDB and PHP configuration — next steps (PENDING)
+
+Apply only on the **new Ubuntu 26.04.1** VM as root. These are the steps to execute next; successful completion has **not yet been verified**. Source: https://docs.librenms.org/Installation/Install-LibreNMS/ with Ubuntu 26.04 selected.
+
+### 4A. Set server and PHP timezones
+
+```bash
+timedatectl set-timezone America/New_York
+timedatectl
+vi /etc/php/8.5/cli/php.ini
+vi /etc/php/8.5/fpm/php.ini
+```
+
+In each PHP ini file ensure:
+
+```ini
+date.timezone = America/New_York
+```
+
+Check:
+
+```bash
+php -r 'echo date_default_timezone_get(), PHP_EOL;'
+```
+
+### 4B. Configure MariaDB
+
+```bash
+vi /etc/mysql/mariadb.conf.d/50-server.cnf
+```
+
+Under the existing `[mariadbd]` section for Ubuntu 26.04, ensure these settings occur once:
+
+```ini
+innodb_file_per_table=1
+lower_case_table_names=0
+```
+
+Restart and check:
+
+```bash
+systemctl enable mariadb
+systemctl restart mariadb
+systemctl is-active mariadb
+mariadb -e "SHOW VARIABLES WHERE Variable_name IN ('innodb_file_per_table','lower_case_table_names');"
+```
+
+Expected: MariaDB active; `innodb_file_per_table=ON`, `lower_case_table_names=0`.
+
+### 4C. Create a **local dev-only** MariaDB database and account
+
+Enter `mariadb` as root. Substitute a generated **unique** password locally for the placeholder; do not commit the password or paste it into the build log.
+
+```sql
+CREATE DATABASE librenms CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'librenms'@'localhost' IDENTIFIED BY 'REPLACE_WITH_UNIQUE_PASSWORD';
+GRANT ALL PRIVILEGES ON librenms.* TO 'librenms'@'localhost';
+EXIT;
+```
+
+Check without exposing secrets:
+
+```bash
+mariadb -e "SHOW DATABASES LIKE 'librenms';"
+mariadb -e "SHOW GRANTS FOR 'librenms'@'localhost';"
+```
+
+Do not use a production database or shared production credentials.
+
+### 4D. PHP-FPM pool — apply after database verification
+
+```bash
+cp /etc/php/8.5/fpm/pool.d/www.conf /etc/php/8.5/fpm/pool.d/librenms.conf
+vi /etc/php/8.5/fpm/pool.d/librenms.conf
+```
+
+Change the pool header and values to `[librenms]`, `user = librenms`, `group = librenms`, `listen = /run/php-fpm-librenms.sock`; keep any other required pool directives. This socket must match the later NGINX `fastcgi_pass`. Keep the default `www` pool until the dedicated pool has been tested.
+
+```bash
+php-fpm8.5 -t
+systemctl restart php8.5-fpm
+systemctl is-active php8.5-fpm
+ls -l /run/php-fpm-librenms.sock
+```
+
+**Do not check off Phase 4 until the commands above and MariaDB access have been verified.**
+
 ## 4. Next implementation stages — NOT YET VERIFIED ON REPLACEMENT VM
 
 These are the remaining installation stages, not claims of completion:
@@ -240,7 +339,7 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 | MariaDB version | `11.8.6`; service active | Verified 2026-10-15 |
 | NGINX version | `1.28.3`; service active | Verified 2026-10-15 |
 | Git version | `2.53.0` | Verified 2026-10-15 |
-| Git remotes | Pending on rebuilt VM | Not configured/verified |
+| Git remotes | `origin`: `Null0Engineer/LibreNMS-Development`; `upstream`: `librenms/librenms` | Verified 2026-10-15; `master` tracking `origin/master` |
 | LibreNMS validation | Pending | Not verified |
 | Snapshot name | Pending | Not created |
 
