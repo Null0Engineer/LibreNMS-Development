@@ -2,7 +2,7 @@
 
 > **Build log / reproducible rebuild guide** — updated 2026-10-15.
 >
-> **Current build status:** Ubuntu 26.04.1 LTS **OS verified on rebuilt VM** (2026-10-15). Git 2.53.0 is installed. PHP is *not yet installed*. Network, SSH, packages, MariaDB, the LibreNMS Git checkout and application setup remain to be verified. The earlier Ubuntu 24.04 VM was discarded; its results are historical only.
+> **Current build status (2026-10-15):** Ubuntu 26.04.1 LTS verified; package prerequisites, PHP 8.5, MariaDB, NGINX, development fork checkout and upstream remote verified. MariaDB database exists and user login succeeds; PHP-FPM `librenms` pool is now running after correcting its missing process manager. **Phase 4 remains open** until timezone settings and database privileges are checked. Application dependencies, web configuration and validation remain pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
 
 ## Purpose and guardrails
 
@@ -28,7 +28,7 @@ Do not make feature changes on production systems. Prefer feature branches, run 
 - [ ] 1. OS version, networking and SSH verified.
 - [x] 2. OS updates and LibreNMS package prerequisites installed and verified (2026-10-15; versions and service states confirmed; reboot recommended due to refreshed packages).
 - [x] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified (2026-10-15; clean checkout on `master`).
-- [ ] 4. MariaDB and PHP configuration completed (MariaDB settings and DB/user setup reported done 2026-10-15; verify outputs and configure PHP timezone/FPM before checking this off).
+- [ ] 4. MariaDB and PHP configuration completed (MariaDB service, settings, database, account login and PHP-FPM pool verified 2026-10-15; timezone and DB privileges still to check).
 - [ ] 5. LibreNMS development dependencies, application settings and web access configured.
 - [ ] 6. Validation/tests completed; a known-good Proxmox snapshot taken.
 - [ ] 7. NetBox integration feature branch created.
@@ -237,7 +237,7 @@ Check:
 php -r 'echo date_default_timezone_get(), PHP_EOL;'
 ```
 
-### 4B. Configure MariaDB — reported complete, verification pending
+### 4B. Configure MariaDB — VERIFIED 2026-10-15
 
 ```bash
 vi /etc/mysql/mariadb.conf.d/50-server.cnf
@@ -261,7 +261,7 @@ mariadb -e "SHOW VARIABLES WHERE Variable_name IN ('innodb_file_per_table','lowe
 
 Expected: MariaDB active; `innodb_file_per_table=ON`, `lower_case_table_names=0`.
 
-### 4C. Create a **local dev-only** MariaDB database and account — reported complete, verification pending
+### 4C. Create a **local dev-only** MariaDB database and account — database/login verified, grants pending
 
 Enter `mariadb` as root. Substitute a generated **unique** password locally for the placeholder; do not commit the password or paste it into the build log.
 
@@ -298,7 +298,7 @@ mariadb -u librenms -p -e "SELECT CURRENT_USER();"
 
 **2026-10-15 progress:** user said **“done”** after being instructed to configure MariaDB and create the dev database/user. Treat 4B and 4C as *operator-reported complete*, not instrument-verified, until these commands pass. Do **not** commit any credentials.
 
-### 4D. PHP-FPM pool — attempted; failed on 2026-10-15; corrective action pending
+### 4D. PHP-FPM pool — FIXED and VERIFIED 2026-10-15
 
 LibreNMS upstream calls for copying the stock `www.conf` and changing the pool name, user/group and unique listen socket. **Keep the original process-manager directives** from that file: PHP-FPM will not start if the `pm` directive is absent. This was missed in earlier rebuild guidance, and it produced an actual failure during setup.
 
@@ -364,7 +364,43 @@ journalctl -xeu php8.5-fpm --no-pager -n 60
 
 Keep the default `www.conf` pool until the new pool is verified. The PHP-FPM socket must match NGINX's later `fastcgi_pass` value. Refer to [official PHP-FPM configuration](https://www.php.net/manual/en/install.fpm.configuration.php) and [LibreNMS installation](https://docs.librenms.org/Installation/Install-LibreNMS/) for authoritative requirements.
 
-**Status:** error diagnosed and remediation documented. User has **not yet supplied a successful post-fix validation**, so Phase 4 must remain unchecked. Also verify the database setup and timezones before declaring Phase 4 complete.
+**Verified recovery on 2026-10-15 10:22 EDT:**
+
+```text
+php-fpm8.5 -t -> configuration file /etc/php/8.5/fpm/php-fpm.conf test is successful
+systemctl restart php8.5-fpm -> succeeded
+systemctl is-active php8.5-fpm -> active
+/run/php-fpm-librenms.sock -> srw-rw---- www-data:www-data
+systemctl status php8.5-fpm -> active (running), enabled
+Processes:
+  php-fpm: pool www (2 workers)
+  php-fpm: pool librenms (2 workers)
+```
+
+The journal still contains the **10:20** failed attempts but shows a successful **10:22:11** start. Do not treat past log errors as current service failures after verification.
+
+**MariaDB verified on 2026-10-15:**
+
+```text
+systemctl is-active mariadb -> active
+innodb_file_per_table -> ON
+lower_case_table_names -> 0
+SHOW DATABASES LIKE 'librenms' -> librenms
+mariadb -u librenms -p -e "SELECT CURRENT_USER();" -> librenms@localhost
+```
+
+Two initial password-login attempts returned `ERROR 1045`; the third succeeded without database changes. No password was recorded in Git. **The specific database grants remain to be verified**; a successful login alone does not prove write permission.
+
+**Remaining Phase 4 validation:**
+
+```bash
+timedatectl show -p Timezone --value
+php -r 'echo date_default_timezone_get(), PHP_EOL;'
+grep -nE '^[[:space:]]*date\.timezone[[:space:]]*=' /etc/php/8.5/cli/php.ini /etc/php/8.5/fpm/php.ini
+mariadb -e "SHOW GRANTS FOR 'librenms'@'localhost';"
+```
+
+Expected timezone: `America/New_York` on both PHP 8.5 CLI and FPM. Expected MariaDB grants: privileges covering the local `librenms` database. **Phase 4 stays unchecked until these final checks pass.**
 
 ## 5. Remaining application setup — NOT YET VERIFIED ON REPLACEMENT VM
 
@@ -406,6 +442,9 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 | NGINX version | `1.28.3`; service active | Verified 2026-10-15 |
 | Git version | `2.53.0` | Verified 2026-10-15 |
 | Git remotes | `origin`: `Null0Engineer/LibreNMS-Development`; `upstream`: `librenms/librenms` | Verified 2026-10-15; `master` tracking `origin/master` |
+| PHP-FPM pool | `php8.5-fpm` running; `librenms` workers; socket `www-data:www-data` | Verified 2026-10-15 10:22 EDT |
+| MariaDB login | `librenms@localhost` | Verified 2026-10-15 (privilege grant detail pending) |
+| PHP timezone | Pending | Verify CLI/FPM ini and system timezone |
 | LibreNMS validation | Pending | Not verified |
 | Snapshot name | Pending | Not created |
 
