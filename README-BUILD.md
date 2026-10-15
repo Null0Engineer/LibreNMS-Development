@@ -2,7 +2,7 @@
 
 > **Build log / reproducible rebuild guide** — updated 2026-10-15.
 >
-> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress**: `.env` connects to MariaDB; `CACHE_STORE=file` is verified; **LibreNMS's initial schema import and database migrations have now succeeded** (2026-10-15). The application key and `.env` permissions are verified. Initial `./validate.php` passed database/schema/RRD checks but reported missing cron wrapper and scheduler; initial local admin, CLI service fixes, web UI, and final validation remain pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
+> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress**: `.env` connects to MariaDB; `CACHE_STORE=file` is verified; **LibreNMS's initial schema import and database migrations have now succeeded** (2026-10-15). The application key and `.env` permissions are verified. Initial `./validate.php` reported missing cron wrapper and scheduler, but after systemd/cron setup and a subsequent poller cycle, **the latest validator has zero `[FAIL]` results and confirms the Python poller wrapper is polling**. Source auto-update is disabled. Initial admin, periodic scheduler-timer verification (timer showed `Trigger: n/a`), web UI and dev-specific checks remain pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
 
 ## Purpose and guardrails
 
@@ -669,7 +669,7 @@ Browse `http://127.0.0.1:8000` on the workstation. Replace `<VM_IP>` with the ne
 
 **Persistent NGINX later:** Use the official [NGINX install instructions](https://docs.librenms.org/Installation/Install-LibreNMS/) with `root /opt/librenms/html` and `fastcgi_pass unix:/run/php-fpm-librenms.sock` (already verified). Keep it restricted until debug is disabled and the site is properly secured. NGINX application-site setup is **not yet executed or tested**.
 
-### 5E. Initial LibreNMS validation — COMPLETED WITH TWO EXPECTED SERVICE FAILURES (2026-10-15)
+### 5E. Initial LibreNMS validation — INITIAL FAILURES RESOLVED 2026-10-15
 
 **Verified GLKVM-console output** (operator is connected via remote KVM from work, not direct SSH):
 
@@ -705,11 +705,33 @@ Composer -> 2.10.3
 [WARN] Log rotation missing
 ```
 
-No evidence of a PHP, database or permissions blocker remains. **Do not report validation as clean until the two `FAIL` results are fixed and validated again.** The optional warnings are independent.
+**Subsequent validation — 2026-10-15:** after cron + scheduler installation, the first recheck still had the same two `FAIL` messages. A later `./validate.php` returned **no `[FAIL]` results** and showed `[OK] Python poller wrapper is polling`; the `Scheduler is not running` failure was absent. Database, migrations, RRD and Composer continued passing. The debug, no-device, global shortcut and completion warnings remained; log-rotation warning disappeared following installation. Record this as **successful validation with expected warnings**, not warnings-free validation.
 
-### 5F. Cron, scheduler and safe Git workflow — NEXT, NOT YET EXECUTED
+**Source code checked:** `LibreNMS/Validations/Poller/CheckPythonWrapper.php` detects a cron entry and an active poller record; `LibreNMS/Validations/Scheduler.php` checks Laravel's `Cache::has('scheduler_working')` flag. This explains why installation alone does not immediately make both checks pass: scheduled execution must be observed. **Do not change the upstream validators** to suppress these first-run checks.
 
-**Repeated validation 2026-10-15 (no service progress verified yet):** operator ran `./validate.php` again; result **still** contains `[FAIL] Python wrapper cron entry is not present` and `[FAIL] Scheduler is not running`. All prior DB/schema/RRD/dependency checks remain OK. The output provides no evidence that `/etc/cron.d/librenms` or the timer were installed or enabled. **Do not mark the service installation or full validation complete** until their actual command output is supplied.
+### 5F. Cron, scheduler and safe Git workflow — INSTALLED; timer periodicity follow-up pending
+
+**Verified service setup on 2026-10-15:**
+- `./lnms config:set update false` applied; `./lnms config:get update` returned `false`. Daily maintenance is preserved without automatic fork source updates.
+- Installed `dist/librenms.cron` as `/etc/cron.d/librenms` (`root:root`, mode `0644`, 874 bytes).
+- Installed `dist/librenms-scheduler.service` and `.timer` in `/etc/systemd/system/`, reloaded systemd and enabled the timer.
+- `systemctl is-active cron` and `systemctl is-active librenms-scheduler.timer` both returned `active`.
+- Installed `misc/librenms.logrotate`; subsequent `./validate.php` no longer warned about log rotation.
+- After the first scheduled activity, the validator said `[OK] Python poller wrapper is polling` and no longer reported scheduler failure.
+- Re-copying the timer unit and `systemctl start` did not show errors, but the timer `status` at approximately 11:01 showed `Active: active (running)` and `Trigger: n/a`. An earlier `systemctl list-timers --all librenms-scheduler.timer` showed last activation at 10:59 with no next time. **Treat periodic scheduler triggering as not yet conclusively verified**, despite the LibreNMS validator passing from its cache flag.
+
+**Next observation (as root):**
+
+```bash
+systemctl list-timers --all librenms-scheduler.timer
+systemctl show librenms-scheduler.timer -p ActiveState -p NextElapseUSecRealtime -p LastTriggerUSec
+journalctl -u librenms-scheduler.service --since "15 minutes ago" --no-pager -n 40
+systemctl cat librenms-scheduler.timer
+```
+
+The shipped timer has `OnCalendar=minutely`. Confirm its last-trigger time advances and the next activation is scheduled. The scheduler service is `Type=oneshot`, so `inactive (dead)` between executions is normal; the timer and recurring execution are the important checks. If `Trigger: n/a` persists, diagnose it before calling scheduler periodicity complete; do not blindly copy/start the same units again.
+
+**For future rebuilds, these are the now-verified installation commands:**
 
 
 
@@ -823,7 +845,8 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 | MariaDB privileges | `GRANT ALL PRIVILEGES ON librenms.*` | Verified 2026-10-15 |
 | Composer dependencies | 202 including require-dev; second run clean, zero package changes | Verified 2026-10-15; missing-directory warnings resolved |
 | Database migrations | Base schema import, tracking table, subsequent migrations through 2026-10-09 | Verified 2026-10-15; all statuses `Ran` |
-| LibreNMS validation | Core database, schema, locks, RRD passed; missing cron + scheduler | Initial run 2026-10-15; two outstanding FAILs |
+| LibreNMS validation | 0 FAIL; Python poller wrapper polling; DB/schema/RRD/Composer OK | Reverified 2026-10-15, expected warnings remain |
+| Scheduled jobs | cron active, scheduler timer active, auto-update `false`; logrotate installed | Verified 2026-10-15; timer showed `Trigger: n/a` — periodic behavior follow-up pending |
 | Application key/.env | Key present; mode `600`, owner `librenms` | Verified 2026-10-15 |
 | Snapshot name | Pending | Not created |
 
