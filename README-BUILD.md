@@ -2,7 +2,7 @@
 
 > **Build log / reproducible rebuild guide** — updated 2026-10-15.
 >
-> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress**: `.env` can now connect to MariaDB and `CACHE_STORE=file` successfully clears Laravel caches. The database migration table has not yet been created; initial schema migration, application key/permission checks and web access are still pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
+> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress**: `.env` connects to MariaDB; `CACHE_STORE=file` is verified; **LibreNMS's initial schema import and database migrations have now succeeded** (2026-10-15). The application key/permissions, user access, web UI, and full validation are pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
 
 ## Purpose and guardrails
 
@@ -522,7 +522,7 @@ Composer still notes `influxdb/influxdb-php` is abandoned. That is a dependency 
 
 The post-install tasks and install idempotence are verified. **Do not rerun Composer unnecessarily.**
 
-### 5C. Local development environment — cache VERIFIED; migration pending
+### 5C. Local development environment — cache and schema VERIFIED
 
 Follow [LibreNMS Getting Started for contributors](https://docs.librenms.org/Developing/Getting-Started/) and the checked-in `.env.example`. The contributor guide calls for `APP_ENV=local`, `APP_DEBUG=true` and local database variables. Keep the dev site **accessible only locally or through SSH tunneling** while debug mode is enabled.
 
@@ -591,14 +591,7 @@ stat -c '%a %U:%G %n' .env
 
 Expected permissions: `600 librenms:librenms`. The local `.env` is never added to Git. If the application key was already set, do not rotate it automatically.
 
-**Database initialization:** After the successful cache correction, the user ran:
-
-```text
-php artisan migrate:status
-ERROR Migration table not found.
-```
-
-That means **no Laravel migration-tracking table has been installed yet**. Since this is the isolated **newly created local development database**, the next step is to initialize the schema with LibreNMS's supported migration command. The [official updating guide](https://docs.librenms.org/General/Updating/) documents `./lnms migrate` for database migrations:
+**Database initialization — VERIFIED 2026-10-15:**
 
 ```bash
 cd /opt/librenms
@@ -606,30 +599,61 @@ cd /opt/librenms
 php artisan migrate:status
 ```
 
-Run as the `librenms` user, and only against the local `DB_DATABASE=librenms` defined in the private `.env`. Check the output for migration failures; do not assume migration succeeded without confirmation. Never run `migrate:fresh`, `migrate:reset`, or schema-clearing commands on any shared or production database.
+The output confirms:
 
-**Status (2026-10-15):** Local `.env` database connection works, file cache behavior is verified, but initial schema migrations are **pending execution and verification**. The `.env` APP_KEY value and permissions checks are also **not yet confirmed** by terminal output. Keep Phase 5 open.
+```text
+Preparing database:
+  Creating migration table -> DONE
+Loading stored database schemas:
+  database/schema/mysql-schema.sql -> DONE
+Running migrations:
+  2019_12_14_000001_create_personal_access_tokens_table -> DONE
+  ... subsequent migrations through ...
+  2026_10_09_000000_reset_invalid_alert_schedule_behavior -> DONE
+php artisan migrate:status:
+  All listed migrations in batches [1] or [2] -> Ran
+```
+
+The base snapshot populated batch 1 and the subsequent migrations populated batch 2. The previously missing `cache` table creation migration appears as `[1] Ran`. There are **no migration errors** in the supplied output.
+
+**Do not rerun schema resets or use `migrate:fresh` / `migrate:reset`.** The schema now exists and subsequent upgrades should use LibreNMS's supported migration path. The `.env` APP_KEY value and permissions checks remain **not yet confirmed** by terminal output. Keep Phase 5 open until web access and validation are verified.
 
 
 
-### 5D. Development web interface — PENDING
+### 5D. Development web interface — NEXT (not yet executed)
 
-Official [LibreNMS contributor quick-start](https://docs.librenms.org/Developing/Getting-Started/) uses `./lnms serve` listening on localhost:8000. Execute from `/opt/librenms` as `librenms`; do not start until `.env` and the local DB have been configured:
+Start with an isolated **loopback-only development server** as described in the [LibreNMS developer Getting Started guide](https://docs.librenms.org/Developing/Getting-Started/). Because `APP_DEBUG=true`, do not expose the web server to a public network.
+
+**First verify these non-secret values as `librenms`:**
 
 ```bash
 cd /opt/librenms
-./lnms serve
+test -s .env && echo 'OK: .env present'
+grep -q '^APP_KEY=base64:' .env && echo 'OK: Laravel application key set'
+stat -c '%a %U:%G %n' .env
+php artisan migrate:status | tail -n 8
 ```
 
-For a remote workstation, prefer an SSH tunnel rather than binding the insecure development server to a public interface:
+Expected `.env` permissions: `600 librenms:librenms`. If `APP_KEY` is missing, generate it once with `php artisan key:generate`; **do not regenerate an existing key**.
+
+**Start the development web server in the `librenms` shell:**
+
+```bash
+cd /opt/librenms
+./lnms serve --host=127.0.0.1 --port=8000
+```
+
+Use the upstream default `./lnms serve` if the CLI version does not accept explicit address/port arguments; confirm with `./lnms serve --help`. Keep the terminal open during testing; Ctrl-C shuts down the server.
+
+**From the Windows/Linux workstation, open a separate SSH session with a local tunnel:**
 
 ```bash
 ssh -L 8000:127.0.0.1:8000 chanley@<VM_IP>
 ```
 
-Then browse `http://127.0.0.1:8000` locally on the workstation. Replace `<VM_IP>` with the actual management address. The server occupies its terminal; stop it with Ctrl-C when finished. **Do not publish Laravel debug mode to a production network.**
+Browse `http://127.0.0.1:8000` on the workstation. Replace `<VM_IP>` with the new VM's actual management address. Do **not** listen on `0.0.0.0` while `APP_DEBUG=true`. Verify the UI and initial local admin account; if needed, inspect the supported command first with `./lnms user:add --help` rather than exposing a password in the shell history.
 
-For a persistent NGINX site instead, follow the [official NGINX installation section](https://docs.librenms.org/Installation/Install-LibreNMS/) using document root `/opt/librenms/html` and the previously verified FastCGI socket `/run/php-fpm-librenms.sock`. This persistent-web configuration has **not yet been installed or tested**.
+**Persistent NGINX later:** Use the official [NGINX install instructions](https://docs.librenms.org/Installation/Install-LibreNMS/) with `root /opt/librenms/html` and `fastcgi_pass unix:/run/php-fpm-librenms.sock` (already verified). Keep it restricted until debug is disabled and the site is properly secured. NGINX application-site setup is **not yet executed or tested**.
 
 ### 5E. Validation, snapshot, feature branch — PENDING
 
@@ -670,6 +694,7 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 | PHP timezone | `America/New_York` (system, CLI, FPM) | Verified 2026-10-15 |
 | MariaDB privileges | `GRANT ALL PRIVILEGES ON librenms.*` | Verified 2026-10-15 |
 | Composer dependencies | 202 including require-dev; second run clean, zero package changes | Verified 2026-10-15; missing-directory warnings resolved |
+| Database migrations | Base schema import, tracking table, subsequent migrations through 2026-10-09 | Verified 2026-10-15; all statuses `Ran` |
 | LibreNMS validation | Pending | Not verified |
 | Snapshot name | Pending | Not created |
 
