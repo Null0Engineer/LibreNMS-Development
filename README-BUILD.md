@@ -2,7 +2,7 @@
 
 > **Build log / reproducible rebuild guide** — updated 2026-10-15.
 >
-> **Current build status (2026-10-15):** Ubuntu 26.04.1 LTS verified; package prerequisites, PHP 8.5, MariaDB, NGINX, development fork checkout and upstream remote verified. MariaDB database exists and user login succeeds; PHP-FPM `librenms` pool is now running after correcting its missing process manager. **Phase 4 remains open** until timezone settings and database privileges are checked. Application dependencies, web configuration and validation remain pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
+> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer downloaded and installed 202 dependencies including require-dev and finished Laravel package discovery/caching, but logged nonfatal missing-directory ACL warnings because runtime folders were absent. **Phase 5 remains in progress** pending filesystem repair, Composer recheck, `.env`, web access and validation. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
 
 ## Purpose and guardrails
 
@@ -28,8 +28,8 @@ Do not make feature changes on production systems. Prefer feature branches, run 
 - [ ] 1. OS version, networking and SSH verified.
 - [x] 2. OS updates and LibreNMS package prerequisites installed and verified (2026-10-15; versions and service states confirmed; reboot recommended due to refreshed packages).
 - [x] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified (2026-10-15; clean checkout on `master`).
-- [ ] 4. MariaDB and PHP configuration completed (MariaDB service, settings, database, account login and PHP-FPM pool verified 2026-10-15; timezone and DB privileges still to check).
-- [ ] 5. LibreNMS development dependencies, application settings and web access configured.
+- [x] 4. MariaDB and PHP configuration completed (timezone CLI/FPM verified, local `librenms` database granted ALL PRIVILEGES, PHP-FPM pool active; 2026-10-15).
+- [ ] 5. LibreNMS development dependencies, application settings and web access configured (Composer dependencies installed, but runtime directories/ACLs, `.env` and web setup pending).
 - [ ] 6. Validation/tests completed; a known-good Proxmox snapshot taken.
 - [ ] 7. NetBox integration feature branch created.
 
@@ -400,19 +400,123 @@ grep -nE '^[[:space:]]*date\.timezone[[:space:]]*=' /etc/php/8.5/cli/php.ini /et
 mariadb -e "SHOW GRANTS FOR 'librenms'@'localhost';"
 ```
 
-Expected timezone: `America/New_York` on both PHP 8.5 CLI and FPM. Expected MariaDB grants: privileges covering the local `librenms` database. **Phase 4 stays unchecked until these final checks pass.**
+**Verified on rebuilt VM, 2026-10-15:**
 
-## 5. Remaining application setup — NOT YET VERIFIED ON REPLACEMENT VM
+```text
+timedatectl -> America/New_York
+PHP CLI date_default_timezone_get() -> America/New_York
+/etc/php/8.5/cli/php.ini -> date.timezone = America/New_York
+/etc/php/8.5/fpm/php.ini -> date.timezone = America/New_York
+MariaDB SHOW GRANTS -> GRANT ALL PRIVILEGES ON librenms.* TO librenms@localhost
+```
 
-These are the remaining installation stages, not claims of completion:
+The MariaDB response also contained a password verifier/hash; **never copy that value into Git, support tickets or the build log**. **Phase 4 verified complete.**
 
-1. Complete and verify Phase 4 MariaDB, timezones and PHP-FPM pool. Apply LibreNMS's documented file permissions/ACLs.
-2. Install Composer **development** dependencies as the `librenms` user. The upstream contributor guide uses `./scripts/composer_wrapper.php install` (without `--no-dev`); do not use production-only dependencies for feature development.
-3. Set `.env` with `APP_ENV=local` and `APP_DEBUG=true` **only for this isolated development VM**; never expose debug output publicly or commit `.env`.
-4. Configure an appropriate development web interface: `./lnms serve` is the upstream contributor quick-start; NGINX/PHP-FPM can be configured for a persistent VM using the official install guide.
-5. Run `./validate.php`, `./lnms dev:check`, relevant unit/integration tests, and upstream format checks where applicable; capture output and correct failures before feature work.
-6. Snapshot VM 107 once working, before starting the NetBox IPAM feature branch.
-7. Document **each actual command, configuration change, verification output, and fix** in this file as the build proceeds. Do not put secrets in the build log.
+## 5. LibreNMS development dependencies and runtime — IN PROGRESS
+
+### 5A. Runtime directories and ACLs — required before Composer on rebuilds
+
+Official installation guide: https://docs.librenms.org/Installation/Install-LibreNMS/ . On the first attempt (2026-10-15), this directory/ACL phase was missed, so the Composer install ended with these nonfatal messages:
+
+```text
+Could not scan for classes inside "vendor/dapphp/radius" which does not appear to be a file nor a folder
+...
+> LibreNMS\\ComposerHelper::postInstall
+setfacl: rrd/: No such file or directory
+setfacl: logs/: No such file or directory
+setfacl: storage/: No such file or directory
+setfacl: bootstrap/cache/: No such file or directory
+```
+
+The `dapphp/radius` missing-path scan was an initial autoload warning: later Composer output shows the library successfully extracted. Do not conclude the install failed from that first line alone. For future clean rebuilds, **create runtime directories and set permissions before the Composer install**.
+
+Run as `root` (or `sudo` each privileged command) from any working directory:
+
+```bash
+install -d -o librenms -g librenms -m 0775 \
+  /opt/librenms/rrd \
+  /opt/librenms/logs \
+  /opt/librenms/storage \
+  /opt/librenms/storage/framework/cache/data \
+  /opt/librenms/storage/framework/sessions \
+  /opt/librenms/storage/framework/views \
+  /opt/librenms/bootstrap/cache
+
+chown -R librenms:librenms \
+  /opt/librenms/rrd \
+  /opt/librenms/logs \
+  /opt/librenms/storage \
+  /opt/librenms/bootstrap/cache
+
+chmod 771 /opt/librenms
+setfacl -d -m g::rwx \
+  /opt/librenms/rrd \
+  /opt/librenms/logs \
+  /opt/librenms/storage \
+  /opt/librenms/bootstrap/cache
+
+setfacl -R -m g::rwx \
+  /opt/librenms/rrd \
+  /opt/librenms/logs \
+  /opt/librenms/storage \
+  /opt/librenms/bootstrap/cache
+```
+
+Verify the `librenms` service account can write to the runtime directories:
+
+```bash
+for d in rrd logs storage bootstrap/cache; do
+  if sudo -u librenms test -w "/opt/librenms/$d"; then
+    echo "OK: $d writable"
+  else
+    echo "FAIL: $d not writable"
+  fi
+done
+
+getfacl -p /opt/librenms/storage
+```
+
+**Status:** commands proposed as corrective action; execution/result **not yet supplied**.
+
+### 5B. Composer development dependencies — packages installed, recheck pending
+
+From the LibreNMS development instructions: https://docs.librenms.org/Developing/Getting-Started/ . Run as the `librenms` service user (without `--no-dev`):
+
+```bash
+su - librenms
+cd /opt/librenms
+./scripts/composer_wrapper.php install
+```
+
+**Observed 2026-10-15:**
+
+```text
+Installing dependencies from lock file (including require-dev)
+Package operations: 202 installs, 0 updates, 0 removals
+Laravel package discovery: DONE
+Blade templates cached successfully
+Laravel optimize: DONE (config/events/routes/views/laravel-data)
+Configuration cache cleared successfully
+Returned to librenms shell prompt
+```
+
+Composer warned `influxdb/influxdb-php` is abandoned with no replacement suggested. This is an upstream dependency warning; do **not** remove or replace locked packages arbitrarily in this downstream fork. The initial `dapphp/radius` class-scan warning did not prevent extraction.
+
+**After fixing runtime directories**, rerun `./scripts/composer_wrapper.php install` as `librenms` and verify the `setfacl: ... No such file or directory` warnings are gone. Capture results. Do not mark this recheck complete until observed.
+
+### 5C. Local development environment — PENDING
+
+Set `.env` with database details (not committed) and `APP_ENV=local`, `APP_DEBUG=true` **only for an isolated development VM**. Never expose Laravel debug mode publicly. Install/setup of local key, migrations and remaining application configuration should follow the official upstream developer instructions and any current install prerequisites.
+
+### 5D. Development web interface — PENDING
+
+Official contributor quick-start: `./lnms serve` (local port 8000). For persistent NGINX with PHP-FPM, configure a proper `/opt/librenms/html` web root and use `/run/php-fpm-librenms.sock` as the FastCGI socket per official LibreNMS instructions. Restrict network access while local debugging is enabled.
+
+### 5E. Validation, snapshot, feature branch — PENDING
+
+Run `./validate.php`, `./lnms dev:check`, applicable tests/lint, and document the output and fixes. After a validated baseline, take a Proxmox VM 107 snapshot before beginning NetBox IPAM development on a new feature branch.
+
+**Documentation rule:** Record exactly what was executed and verified, distinguish warnings from failures, do not copy credential hashes or other secrets, and do not overwrite existing user-created configuration during a rebuild.
 
 ## History: discarded Ubuntu 24.04 build (reference only)
 
@@ -444,7 +548,9 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 | Git remotes | `origin`: `Null0Engineer/LibreNMS-Development`; `upstream`: `librenms/librenms` | Verified 2026-10-15; `master` tracking `origin/master` |
 | PHP-FPM pool | `php8.5-fpm` running; `librenms` workers; socket `www-data:www-data` | Verified 2026-10-15 10:22 EDT |
 | MariaDB login | `librenms@localhost` | Verified 2026-10-15 (privilege grant detail pending) |
-| PHP timezone | Pending | Verify CLI/FPM ini and system timezone |
+| PHP timezone | `America/New_York` (system, CLI, FPM) | Verified 2026-10-15 |
+| MariaDB privileges | `GRANT ALL PRIVILEGES ON librenms.*` | Verified 2026-10-15 |
+| Composer dependencies | 202 including require-dev; postinstall warning for 4 missing dirs | Download/install completed; ACL fix pending |
 | LibreNMS validation | Pending | Not verified |
 | Snapshot name | Pending | Not created |
 
