@@ -148,7 +148,9 @@ systemctl is-active nginx     -> active
 systemctl is-active php8.5-fpm -> active
 ```
 
-APT reported 176 packages installed, 0 upgraded and 0 removed by the prerequisite-install command, with 3 packages left 'Not Upgrading'. Package triggers completed and `needrestart` reported some deferred restarts and the then-current SSH session holding outdated binaries; a controlled reboot was recommended before continuing. No fatal package errors were visible. Reverify PHP, MariaDB, NGINX and PHP-FPM after reboot. `snmpd` was installed as a dependency but **SNMPv3 configuration has not yet been completed**.
+APT reported 176 packages installed, 0 upgraded and 0 removed by the prerequisite-install command, with 3 packages left 'Not Upgrading'. Package triggers completed and `needrestart` reported some deferred restarts and the then-current SSH session holding outdated binaries; a controlled reboot was recommended before continuing. No fatal package errors were visible. Reverify PHP, MariaDB, NGINX and PHP-FPM after reboot. `snmpd` was installed as a prerequisite but **SNMPv3 configuration has not yet been completed**.
+
+**SNMPv3-only policy:** Do not leave the package's sample SNMP agent configuration serving an older protocol. Until its SNMPv3-only listener is explicitly reviewed and configured, run `systemctl disable --now snmpd`. This does not prevent LibreNMS from polling other devices using SNMPv3. Restore this service only after a compliant SHA/AES authPriv configuration is in place. This corrective command is **recommended, not yet verified executed** on the new VM.
 
 ### Phase 2 package-install evidence (2026-10-15)
 
