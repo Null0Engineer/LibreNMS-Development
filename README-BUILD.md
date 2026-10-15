@@ -298,34 +298,73 @@ mariadb -u librenms -p -e "SELECT CURRENT_USER();"
 
 **2026-10-15 progress:** user said **“done”** after being instructed to configure MariaDB and create the dev database/user. Treat 4B and 4C as *operator-reported complete*, not instrument-verified, until these commands pass. Do **not** commit any credentials.
 
-### 4D. PHP-FPM pool — apply after database verification
+### 4D. PHP-FPM pool — attempted; failed on 2026-10-15; corrective action pending
+
+LibreNMS upstream calls for copying the stock `www.conf` and changing the pool name, user/group and unique listen socket. **Keep the original process-manager directives** from that file: PHP-FPM will not start if the `pm` directive is absent. This was missed in earlier rebuild guidance, and it produced an actual failure during setup.
+
+First-time setup (**do not overwrite an existing edited pool on a running VM**):
 
 ```bash
 cp /etc/php/8.5/fpm/pool.d/www.conf /etc/php/8.5/fpm/pool.d/librenms.conf
 vi /etc/php/8.5/fpm/pool.d/librenms.conf
 ```
 
-Change the pool header and values to `[librenms]`, `user = librenms`, `group = librenms`, `listen = /run/php-fpm-librenms.sock`; keep any other required pool directives. This socket must match the later NGINX `fastcgi_pass`. Keep the default `www` pool until the dedicated pool has been tested.
+Under the `[librenms]` section, ensure **exactly one active entry per setting** (keep other needed defaults in the copied pool):
+
+```ini
+[librenms]
+user = librenms
+group = librenms
+listen = /run/php-fpm-librenms.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+```
+
+These modest worker counts are initial values for this 8 GiB development VM, not benchmarked production tuning. `pm` and `pm.max_children` are mandatory; dynamic also requires the `pm.min_spare_servers` and `pm.max_spare_servers` settings.
+
+**Observed failure (2026-10-15):**
+
+```text
+ALERT: [pool librenms] the process manager is missing (static, dynamic or ondemand)
+ERROR: failed to post process the configuration
+ERROR: FPM initialization failed
+Job for php8.5-fpm.service failed because the control process exited with error code.
+systemctl is-active php8.5-fpm -> activating (not active)
+ls: cannot access '/run/php-fpm-librenms.sock': No such file or directory
+```
+
+**Recovery from this exact failure** — edit the existing file, do not repeat `cp` (that would erase it). After saving:
 
 ```bash
+grep -nE '^\[|^[[:space:]]*pm([[:space:]]*=|\.)' /etc/php/8.5/fpm/pool.d/librenms.conf
 php-fpm8.5 -t
+```
+
+**Only when the syntax check succeeds:**
+
+```bash
 systemctl restart php8.5-fpm
 systemctl is-active php8.5-fpm
 ls -l /run/php-fpm-librenms.sock
 ```
 
-**PHP-FPM verification (pending):**
+Expected: successful `php-fpm8.5 -t`, service `active`, and the socket present. If failed, use:
 
 ```bash
-php-fpm8.5 -t
-systemctl is-active php8.5-fpm
-grep -E '^\[(librenms|www)\]|^(user|group|listen)\s*=' /etc/php/8.5/fpm/pool.d/librenms.conf
-ls -l /run/php-fpm-librenms.sock
+systemctl status php8.5-fpm --no-pager -l
+journalctl -xeu php8.5-fpm --no-pager -n 60
 ```
 
-The PHP-FPM `librenms` process must run as `librenms`. The socket must exist and be accessible by the NGINX worker; the socket path must match NGINX's future `fastcgi_pass`. Preserve `www.conf` until the new pool is tested.
+Keep the default `www.conf` pool until the new pool is verified. The PHP-FPM socket must match NGINX's later `fastcgi_pass` value. Refer to [official PHP-FPM configuration](https://www.php.net/manual/en/install.fpm.configuration.php) and [LibreNMS installation](https://docs.librenms.org/Installation/Install-LibreNMS/) for authoritative requirements.
 
-**Do not check off Phase 4 until the commands above, timezones and MariaDB access have been verified.**
+**Status:** error diagnosed and remediation documented. User has **not yet supplied a successful post-fix validation**, so Phase 4 must remain unchecked. Also verify the database setup and timezones before declaring Phase 4 complete.
 
 ## 5. Remaining application setup — NOT YET VERIFIED ON REPLACEMENT VM
 
