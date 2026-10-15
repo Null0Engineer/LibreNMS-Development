@@ -709,6 +709,10 @@ No evidence of a PHP, database or permissions blocker remains. **Do not report v
 
 ### 5F. Cron, scheduler and safe Git workflow — NEXT, NOT YET EXECUTED
 
+**Repeated validation 2026-10-15 (no service progress verified yet):** operator ran `./validate.php` again; result **still** contains `[FAIL] Python wrapper cron entry is not present` and `[FAIL] Scheduler is not running`. All prior DB/schema/RRD/dependency checks remain OK. The output provides no evidence that `/etc/cron.d/librenms` or the timer were installed or enabled. **Do not mark the service installation or full validation complete** until their actual command output is supplied.
+
+
+
 Follow [official LibreNMS installation](https://docs.librenms.org/Installation/Install-LibreNMS/) for `dist/librenms.cron`, scheduler service/timer, and log rotation. **Important for development:** the committed `dist/librenms.cron` contains `daily.sh` at 00:19 each day, which can update source files. LibreNMS says **not to remove this job** because it performs database cleanup; instead [disable core auto-updates](https://docs.librenms.org/General/Updating/) with `lnms config:set update false` so development work isn't changed underfoot.
 
 **Run as `librenms` first:**
@@ -725,6 +729,8 @@ Expected `false`; **do not enable scheduled jobs until this value is confirmed**
 
 ```bash
 cp /opt/librenms/dist/librenms.cron /etc/cron.d/librenms
+chown root:root /etc/cron.d/librenms
+chmod 644 /etc/cron.d/librenms
 cp /opt/librenms/dist/librenms-scheduler.service \
    /opt/librenms/dist/librenms-scheduler.timer \
    /etc/systemd/system/
@@ -737,6 +743,7 @@ systemctl enable --now librenms-scheduler.timer
 systemctl is-active cron
 systemctl is-active librenms-scheduler.timer
 systemctl list-timers --all librenms-scheduler.timer
+ls -l /etc/cron.d/librenms
 ```
 
 The stock cron config has `discovery-wrapper.py`, `poller-wrapper.py`, alerting/billing, and `daily.sh`. The timer starts `php artisan schedule:run` as `librenms` on a minutely cadence. **Do not also enable LibreNMS Dispatcher polling** alongside this cron job without disabling the duplicate cron pollers; see [official Dispatcher docs](https://docs.librenms.org/Extensions/Dispatcher-Service/).
