@@ -2,7 +2,7 @@
 
 > **Build log / reproducible rebuild guide** — updated 2026-10-15.
 >
-> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress** pending `.env`, application database initialization, web access and validation. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
+> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress**: `.env` can now connect to MariaDB and `CACHE_STORE=file` successfully clears Laravel caches. The database migration table has not yet been created; initial schema migration, application key/permission checks and web access are still pending. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
 
 ## Purpose and guardrails
 
@@ -522,7 +522,7 @@ Composer still notes `influxdb/influxdb-php` is abandoned. That is a dependency 
 
 The post-install tasks and install idempotence are verified. **Do not rerun Composer unnecessarily.**
 
-### 5C. Local development environment — NEXT (not yet executed)
+### 5C. Local development environment — cache VERIFIED; migration pending
 
 Follow [LibreNMS Getting Started for contributors](https://docs.librenms.org/Developing/Getting-Started/) and the checked-in `.env.example`. The contributor guide calls for `APP_ENV=local`, `APP_DEBUG=true` and local database variables. Keep the dev site **accessible only locally or through SSH tunneling** while debug mode is enabled.
 
@@ -579,7 +579,7 @@ Table 'librenms.cache' doesn't exist
 SQL: delete from `cache`
 ```
 
-This occurred during `php artisan optimize:clear` because the default database-backed cache had no table. The stack trace shows a cache store deletion, **not** a failure to log in to MariaDB. Corrective action recorded above; **user has not yet supplied successful output of the fix**. Do not create a speculative cache table or edit `config/cache.php` to resolve this; local `.env` configuration is sufficient. Once the schema exists, database cache can be considered separately.
+This occurred during `php artisan optimize:clear` because the default database-backed cache had no table. The stack trace shows a cache store deletion, **not** a failure to log in to MariaDB. **Fix confirmed on 2026-10-15:** user set `CACHE_STORE=file` and successfully ran `php artisan config:clear`, `php artisan cache:clear`, `php artisan optimize:clear` (all six cache groups DONE), `php artisan config:show cache.default` (value `file`) and `php artisan config:show cache` (default `file`, file-store path `storage/framework/cache/data`). Do not create a speculative cache table or edit `config/cache.php` to resolve this; local `.env` configuration is sufficient. Once the schema exists, database cache can be considered separately.
 
 Check that the key was set **without printing it** and the file stays private:
 
@@ -591,15 +591,24 @@ stat -c '%a %U:%G %n' .env
 
 Expected permissions: `600 librenms:librenms`. The local `.env` is never added to Git. If the application key was already set, do not rotate it automatically.
 
-**Database initialization:** Check migration status after the app can read `.env`:
+**Database initialization:** After the successful cache correction, the user ran:
+
+```text
+php artisan migrate:status
+ERROR Migration table not found.
+```
+
+That means **no Laravel migration-tracking table has been installed yet**. Since this is the isolated **newly created local development database**, the next step is to initialize the schema with LibreNMS's supported migration command. The [official updating guide](https://docs.librenms.org/General/Updating/) documents `./lnms migrate` for database migrations:
 
 ```bash
+cd /opt/librenms
+./lnms migrate
 php artisan migrate:status
 ```
 
-For a completely empty dev database, the migrations may not yet be installed; assess the output before running `php artisan migrate` on this **local development database only**. Document the exact result and SQL state before enabling additional processes. Do not run migrations against production.
+Run as the `librenms` user, and only against the local `DB_DATABASE=librenms` defined in the private `.env`. Check the output for migration failures; do not assume migration succeeded without confirmation. Never run `migrate:fresh`, `migrate:reset`, or schema-clearing commands on any shared or production database.
 
-**Status:** `.env` exists and MariaDB was contacted successfully by Artisan (confirmed by the stack trace), but `php artisan optimize:clear` failed due to the missing `cache` table. File cache correction provided; **verification pending**. Do not mark phase 5 complete yet.
+**Status (2026-10-15):** Local `.env` database connection works, file cache behavior is verified, but initial schema migrations are **pending execution and verification**. The `.env` APP_KEY value and permissions checks are also **not yet confirmed** by terminal output. Keep Phase 5 open.
 
 
 
