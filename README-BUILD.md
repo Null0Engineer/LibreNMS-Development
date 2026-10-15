@@ -620,7 +620,21 @@ The base snapshot populated batch 1 and the subsequent migrations populated batc
 
 
 
-### 5D. Development web interface — NEXT (not yet executed)
+### 5D. Development web interface — DEFERRED from GLKVM access; console checks next
+
+**2026-10-15 access limitation:** the user is operating the home Proxmox/LibreNMS VM over a **GLKVM remote console from work**, rather than an SSH session originating on the work computer. This provides remote keyboard/video but **not automatically a network route from the work computer to the VM**. The SSH tunnel command below requires separate network reachability to the VM; it cannot be assumed to work merely because the GLKVM console is reachable. Do not advise opening router inbound ports or running the Laravel debug server on 0.0.0.0 as a workaround.
+
+**Complete CLI-only tasks now, from the GLKVM console, as `librenms`:**
+
+```bash
+cd /opt/librenms
+grep -q '^APP_KEY=base64:' .env && echo "APP_KEY configured" || echo "APP_KEY not set"
+stat -c '%a %U:%G %n' .env
+./validate.php
+./lnms user:add --help
+```
+
+Capture validation errors and the admin account creation command syntax; do not paste secrets or raw `.env` contents. The goal is to create the initial admin user using the supported command (subject to the actual `--help` output) and address validation findings. For web smoke tests before workstation access is available, use an HTTP request to `127.0.0.1` from the VM console **after** a loopback-only server is running, rather than claiming a browser test occurred.
 
 Start with an isolated **loopback-only development server** as described in the [LibreNMS developer Getting Started guide](https://docs.librenms.org/Developing/Getting-Started/). Because `APP_DEBUG=true`, do not expose the web server to a public network.
 
@@ -645,7 +659,7 @@ cd /opt/librenms
 
 Use the upstream default `./lnms serve` if the CLI version does not accept explicit address/port arguments; confirm with `./lnms serve --help`. Keep the terminal open during testing; Ctrl-C shuts down the server.
 
-**From the Windows/Linux workstation, open a separate SSH session with a local tunnel:**
+**When the workstation can actually route to the VM (home LAN/VPN), open an SSH session with a local tunnel. Not presently available through GLKVM alone:**
 
 ```bash
 ssh -L 8000:127.0.0.1:8000 chanley@<VM_IP>
