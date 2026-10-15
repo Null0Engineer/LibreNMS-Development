@@ -2,7 +2,7 @@
 
 > **Build log / reproducible rebuild guide** — updated 2026-10-15.
 >
-> **Current build status:** Ubuntu 26.04.1 LTS **rebuild in progress**. Do not mark a step complete until the replacement VM has been verified. The earlier Ubuntu 24.04 VM was discarded, so its successful package and Git checks are *historical*, not proof that the new VM is configured.
+> **Current build status:** Ubuntu 26.04.1 LTS **OS verified on rebuilt VM** (2026-10-15). Git 2.53.0 is installed. PHP is *not yet installed*. Network, SSH, packages, MariaDB, the LibreNMS Git checkout and application setup remain to be verified. The earlier Ubuntu 24.04 VM was discarded; its results are historical only.
 
 ## Purpose and guardrails
 
@@ -24,7 +24,7 @@ Do not make feature changes on production systems. Prefer feature branches, run 
 
 ## Progress checklist — replacement VM
 
-- [ ] 0. Standard Ubuntu Server 26.04.1 installation completed; no Cloud-Init.
+- [x] 0. Standard Ubuntu Server 26.04.1 installation completed; no Cloud-Init (OS release verified).
 - [ ] 1. OS version, networking and SSH verified.
 - [ ] 2. OS updates and LibreNMS package prerequisites installed and verified.
 - [ ] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified.
@@ -70,6 +70,19 @@ ip route
 
 Confirm `VERSION_ID="26.04"`, the expected hostname, the root filesystem and a reachable management address **before installing dependencies**.
 
+**Actual rebuilt-VM results, verified 2026-10-15:**
+
+```text
+PRETTY_NAME="Ubuntu 26.04.1 LTS"
+VERSION_ID="26.04"
+VERSION_CODENAME=resolute
+git version 2.53.0
+php: command not found
+Ubuntu apt suggested php-cli (PHP 8.5 family, including php8.5-cli 8.5.4-0ubuntu1.1).
+```
+
+These values are baseline evidence, not evidence of package or application installation. Hostname/network/SSH checks from this section have not yet been supplied.
+
 ## 1. Baseline tools and SSH (run on the NEW Ubuntu VM)
 
 Log in as `chanley`; use `sudo` for privileged operations:
@@ -97,6 +110,8 @@ From the administrator workstation, verify SSH connectivity as `chanley` using t
 ## 2. LibreNMS prerequisites on Ubuntu 26.04
 
 LibreNMS's current installation guide requires **PHP >= 8.4**, recommends **PHP 8.5**, and has an Ubuntu 26.04 package list. Re-check upstream instructions before each rebuild: https://docs.librenms.org/Installation/Install-LibreNMS/ .
+
+**Current status:** PHP was *not installed* when checked on 2026-10-15. The Ubuntu 26.04 apt guidance offered PHP 8.5. Use the distro's default PHP 8.5 packages below; no external PHP repository should be needed. The commands below are **next actions**, not yet executed on the new VM.
 
 ```bash
 sudo apt update
@@ -192,11 +207,11 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 
 | Item | New VM result | Date / status |
 |---|---|---|
-| Ubuntu release | Pending | Rebuild in progress |
-| PHP version | Pending | Not verified |
-| MariaDB version | Pending | Not verified |
-| NGINX version | Pending | Not verified |
-| Git version | Pending | Not verified |
+| Ubuntu release | `26.04.1 LTS` / `resolute` | Verified 2026-10-15 |
+| PHP version | Not installed; apt offers PHP 8.5 | Pending installation |
+| MariaDB version | Pending | Not installed/verified |
+| NGINX version | Pending | Not installed/verified |
+| Git version | `2.53.0` | Verified 2026-10-15 |
 | Git remotes | Pending | Not verified |
 | LibreNMS validation | Pending | Not verified |
 | Snapshot name | Pending | Not created |
