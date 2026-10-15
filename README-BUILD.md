@@ -2,7 +2,7 @@
 
 > **Build log / reproducible rebuild guide** — updated 2026-10-15.
 >
-> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer downloaded and installed 202 dependencies including require-dev and finished Laravel package discovery/caching, but logged nonfatal missing-directory ACL warnings because runtime folders were absent. **Phase 5 remains in progress** pending filesystem repair, Composer recheck, `.env`, web access and validation. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
+> **Current build status (2026-10-15):** Ubuntu 26.04.1, prerequisites, Git fork and upstream remotes, MariaDB permissions, PHP 8.5 timezones, and PHP-FPM pool verified. **Phase 4 is complete.** Composer installed 202 packages including require-dev; **the second Composer run completed with no missing-directory/ACL warnings**, and Laravel's post-install tasks succeeded. **Phase 5 remains in progress** pending `.env`, application database initialization, web access and validation. Earlier Ubuntu 24.04 and Cloud-Init attempts were discarded.
 
 ## Purpose and guardrails
 
@@ -29,7 +29,7 @@ Do not make feature changes on production systems. Prefer feature branches, run 
 - [x] 2. OS updates and LibreNMS package prerequisites installed and verified (2026-10-15; versions and service states confirmed; reboot recommended due to refreshed packages).
 - [x] 3. LibreNMS fork cloned, correct service account/permissions and upstream Git remote verified (2026-10-15; clean checkout on `master`).
 - [x] 4. MariaDB and PHP configuration completed (timezone CLI/FPM verified, local `librenms` database granted ALL PRIVILEGES, PHP-FPM pool active; 2026-10-15).
-- [ ] 5. LibreNMS development dependencies, application settings and web access configured (Composer dependencies installed, but runtime directories/ACLs, `.env` and web setup pending).
+- [ ] 5. LibreNMS development dependencies, application settings and web access configured (Composer and post-install recheck verified; `.env`, application database initialization and web setup pending).
 - [ ] 6. Validation/tests completed; a known-good Proxmox snapshot taken.
 - [ ] 7. NetBox integration feature branch created.
 
@@ -476,9 +476,9 @@ done
 getfacl -p /opt/librenms/storage
 ```
 
-**Status:** commands proposed as corrective action; execution/result **not yet supplied**.
+**Status (2026-10-15):** the directory/ACL repair was followed by a **clean Composer rerun** with no `setfacl` missing-path warnings. This supports that the directories exist for Composer's ACL setup. Direct results of the four directory-writability tests have **not** been supplied, so do not mark those particular checks instrument-verified.
 
-### 5B. Composer development dependencies — packages installed, recheck pending
+### 5B. Composer development dependencies — VERIFIED (second run clean)
 
 From the LibreNMS development instructions: https://docs.librenms.org/Developing/Getting-Started/ . Run as the `librenms` service user (without `--no-dev`):
 
@@ -502,15 +502,99 @@ Returned to librenms shell prompt
 
 Composer warned `influxdb/influxdb-php` is abandoned with no replacement suggested. This is an upstream dependency warning; do **not** remove or replace locked packages arbitrarily in this downstream fork. The initial `dapphp/radius` class-scan warning did not prevent extraction.
 
-**After fixing runtime directories**, rerun `./scripts/composer_wrapper.php install` as `librenms` and verify the `setfacl: ... No such file or directory` warnings are gone. Capture results. Do not mark this recheck complete until observed.
+**Verified second run, 2026-10-15:**
 
-### 5C. Local development environment — PENDING
+```text
+Installing dependencies from lock file (including require-dev)
+Nothing to install, update or remove
+Generating optimized autoload files
+All Laravel package discoveries: DONE
+Blade templates cached successfully
+Laravel optimize: config/events/routes/views/laravel-data DONE
+Configuration cache cleared successfully
+No missing directory errors; no setfacl warnings
+Command returned to the librenms shell
+```
 
-Set `.env` with database details (not committed) and `APP_ENV=local`, `APP_DEBUG=true` **only for an isolated development VM**. Never expose Laravel debug mode publicly. Install/setup of local key, migrations and remaining application configuration should follow the official upstream developer instructions and any current install prerequisites.
+Composer still notes `influxdb/influxdb-php` is abandoned. That is a dependency maintenance warning rather than an installation failure; defer any dependency changes to a separately scoped, upstream-compatible PR.
+
+The post-install tasks and install idempotence are verified. **Do not rerun Composer unnecessarily.**
+
+### 5C. Local development environment — NEXT (not yet executed)
+
+Follow [LibreNMS Getting Started for contributors](https://docs.librenms.org/Developing/Getting-Started/) and the checked-in `.env.example`. The contributor guide calls for `APP_ENV=local`, `APP_DEBUG=true` and local database variables. Keep the dev site **accessible only locally or through SSH tunneling** while debug mode is enabled.
+
+Logged in as the **`librenms` service user**:
+
+```bash
+cd /opt/librenms
+test -f .env || cp .env.example .env
+chmod 600 .env
+vi .env
+```
+
+Add or update exactly one active value for each of these keys (the `DB_*` lines in `.env.example` are commented out until you uncomment or replace them):
+
+```dotenv
+APP_ENV=local
+APP_DEBUG=true
+APP_URL=http://127.0.0.1:8000
+DB_HOST=localhost
+DB_PORT=3306
+DB_DATABASE=librenms
+DB_USERNAME=librenms
+DB_PASSWORD="REPLACE_WITH_YOUR_EXISTING_LOCAL_DB_PASSWORD"
+```
+
+The database credentials are those already created in Phase 4. `DB_HOST=localhost` is deliberate for this same-host MariaDB account. Do not run `mariadb -e` with a password on the command line or paste `.env` into support chat.
+
+Generate a Laravel application key and clear cached configuration:
+
+```bash
+php artisan key:generate
+php artisan optimize:clear
+```
+
+Check that the key was set **without printing it** and the file stays private:
+
+```bash
+test -s .env && echo 'OK: .env present'
+grep -q '^APP_KEY=base64:' .env && echo 'OK: Laravel application key set'
+stat -c '%a %U:%G %n' .env
+```
+
+Expected permissions: `600 librenms:librenms`. The local `.env` is never added to Git. If the application key was already set, do not rotate it automatically.
+
+**Database initialization:** Check migration status after the app can read `.env`:
+
+```bash
+php artisan migrate:status
+```
+
+For a completely empty dev database, the migrations may not yet be installed; assess the output before running `php artisan migrate` on this **local development database only**. Document the exact result and SQL state before enabling additional processes. Do not run migrations against production.
+
+**Status:** commands prepared, not yet executed or verified.
+
+
 
 ### 5D. Development web interface — PENDING
 
-Official contributor quick-start: `./lnms serve` (local port 8000). For persistent NGINX with PHP-FPM, configure a proper `/opt/librenms/html` web root and use `/run/php-fpm-librenms.sock` as the FastCGI socket per official LibreNMS instructions. Restrict network access while local debugging is enabled.
+Official [LibreNMS contributor quick-start](https://docs.librenms.org/Developing/Getting-Started/) uses `./lnms serve` listening on localhost:8000. Execute from `/opt/librenms` as `librenms`; do not start until `.env` and the local DB have been configured:
+
+```bash
+cd /opt/librenms
+./lnms serve
+```
+
+For a remote workstation, prefer an SSH tunnel rather than binding the insecure development server to a public interface:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 chanley@<VM_IP>
+```
+
+Then browse `http://127.0.0.1:8000` locally on the workstation. Replace `<VM_IP>` with the actual management address. The server occupies its terminal; stop it with Ctrl-C when finished. **Do not publish Laravel debug mode to a production network.**
+
+For a persistent NGINX site instead, follow the [official NGINX installation section](https://docs.librenms.org/Installation/Install-LibreNMS/) using document root `/opt/librenms/html` and the previously verified FastCGI socket `/run/php-fpm-librenms.sock`. This persistent-web configuration has **not yet been installed or tested**.
 
 ### 5E. Validation, snapshot, feature branch — PENDING
 
@@ -550,7 +634,7 @@ The Git clone, ownership change, upstream fetch and remote/branch checks were co
 | MariaDB login | `librenms@localhost` | Verified 2026-10-15 (privilege grant detail pending) |
 | PHP timezone | `America/New_York` (system, CLI, FPM) | Verified 2026-10-15 |
 | MariaDB privileges | `GRANT ALL PRIVILEGES ON librenms.*` | Verified 2026-10-15 |
-| Composer dependencies | 202 including require-dev; postinstall warning for 4 missing dirs | Download/install completed; ACL fix pending |
+| Composer dependencies | 202 including require-dev; second run clean, zero package changes | Verified 2026-10-15; missing-directory warnings resolved |
 | LibreNMS validation | Pending | Not verified |
 | Snapshot name | Pending | Not created |
 
